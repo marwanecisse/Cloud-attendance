@@ -8,8 +8,8 @@ def img_to_b64(path: str) -> str:
         return base64.b64encode(f.read()).decode("utf-8")
 
 payload = {
-    "request_id": "single-justin-001",
-    "image_b64": img_to_b64("justin.jpeg"),  # <-- photo avec Justin seul
+    "request_id": "single-001",
+    "image_b64": img_to_b64("ManonBannerman.webp"),
     "threshold": 0.35
 }
 

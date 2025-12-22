@@ -32,7 +32,20 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
             timeout=240
         )
         r1.raise_for_status()
-        reco = r1.json()
+        raw = r1.json()
+
+        if not raw.get("ok"):
+            raise ValueError(f"Recognition failed: {raw.get('error')}")
+
+        data = raw.get("data", {})
+
+        reco = {
+            "faces_detected": data.get("faces_detected", 0),
+            "total_students": data.get("total_students", 0),
+            "present_count": data.get("present_count", 0),
+            "attendance_percentage": data.get("attendance_percentage", 0.0),
+            "results": data.get("results", [])
+        }
 
         # Extraire liste des présents (uniques)
         present_map = {}
@@ -98,7 +111,19 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
 
     except Exception as e:
         return func.HttpResponse(
-            json.dumps({"error": str(e)}),
-            status_code=500,
+            json.dumps({
+                "ok": False,
+                "error": str(e),
+                "recognition": {
+                    "faces_detected": 0,
+                    "total_students": 0,
+                    "present_count": 0,
+                    "attendance_percentage": 0.0,
+                    "results": []
+                },
+                "pdf_url": None,
+                "email": None
+            }),
+            status_code=200,
             mimetype="application/json"
         )

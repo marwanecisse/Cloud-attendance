@@ -1,38 +1,20 @@
-import base64
 import requests
-import json
 
-BASE_URL = "http://localhost:7071/api"
-# Si authLevel=function et que ça exige une clé, ajoute ?code=... à l'URL (voir plus bas)
-REGISTER_URL = f"{BASE_URL}/RegisterStudent"
-RECO_URL = f"{BASE_URL}/RecognizeAndMark"
+# URL de ta fonction RegisterStudent (locale ou cloud)
+url = "http://localhost:7071/api/RegisterStudent"
 
-def img_to_b64(path: str) -> str:
-    with open(path, "rb") as f:
-        return base64.b64encode(f.read()).decode("utf-8")
-
-# -------- 1) Test RegisterStudent (1 visage) --------
-img_b64 = img_to_b64("photo.jpg")
-
-payload_register = {
-    "matricule": "A001",
-    "first_name": "Ali",
-    "last_name": "Diallo",
+# Exemple d'étudiant à enregistrer
+data = {
+    "matricule": "2025001",
+    "first_name": "Alice",
+    "last_name": "Dupont",
     "class_id": 1,
-    "image_b64": img_b64
+    "image_url": "https://attendanceimage.blob.core.windows.net/attendance/test/3ed49741be0e4d9cafb904cfd097c950.jpg"
 }
 
-r = requests.post(REGISTER_URL, json=payload_register, timeout=120)
-print("REGISTER status:", r.status_code)
-print(r.text)
+resp = requests.post(url, json=data)
 
-# -------- 2) Test RecognizeAndMark (peut être multi-visages) --------
-payload_reco = {
-    "request_id": "sess-001",
-    "image_b64": img_b64,      # tu peux remplacer par une image multi-visages plus tard
-    "threshold": 0.35
-}
-
-r2 = requests.post(RECO_URL, json=payload_reco, timeout=120)
-print("\nRECO status:", r2.status_code)
-print(r2.text)
+if resp.status_code == 200:
+    print("Réponse :", resp.json())
+else:
+    print("Erreur :", resp.status_code, resp.text)

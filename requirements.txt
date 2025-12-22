@@ -7,8 +7,9 @@ requests
 pymysql
 numpy
 opencv-python-headless
-deepface
-tensorflow-cpu
+deepface==0.0.96             # version stable avec TF 2.12
+tensorflow-cpu==2.12.0     # version compatible avec DeepFace
+keras==2.12.0               # pour éviter l’erreur tf-keras
 azure-storage-blob
 sendgrid
 reportlab

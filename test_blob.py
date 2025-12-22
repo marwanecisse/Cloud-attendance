@@ -1,6 +1,6 @@
 from shared import upload_bytes_to_blob
 
-with open("photo.jpg", "rb") as f:
+with open("YoonchaeJeong.jpg", "rb") as f:
     url = upload_bytes_to_blob(
         container="attendance",
         data=f.read(),

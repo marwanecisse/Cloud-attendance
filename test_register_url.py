@@ -4,11 +4,11 @@ import json
 REGISTER_URL = "http://localhost:7071/api/RegisterStudent"
 
 payload = {
-    "matricule": "A010",
-    "first_name": "Test",
-    "last_name": "Blob",
+    "matricule": "A006",
+    "first_name": "Yoonchae",
+    "last_name": "Jeong",
     "class_id": 1,
-    "image_url": "https://attendanceimage.blob.core.windows.net/attendance/uploads/7c7fa7c277134d75b0f4557ea261b171.jpg"
+    "image_url": "https://attendanceimage.blob.core.windows.net/attendance/test/78aece20ceaf4dbc97cb9970709e2f3e.jpg"
 }
 
 r = requests.post(REGISTER_URL, json=payload, timeout=180)
