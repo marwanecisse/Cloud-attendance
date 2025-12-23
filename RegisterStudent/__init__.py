@@ -1,3 +1,4 @@
+#RegisterStudent/__init__.py
 import azure.functions as func
 import json
 import numpy as np
@@ -60,37 +61,49 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
         # 5) DB: insert / update
         conn = mysql_conn()
         with conn.cursor() as cur:
+            # 5.a) Rechercher étudiant existant
             cur.execute("SELECT id FROM students WHERE matricule=%s", (matricule,))
             row = cur.fetchone()
 
             if row:
                 student_id = row["id"]
+
+                # mettre à jour les infos si nécessaires
                 cur.execute(
                     """
                     UPDATE students
-                    SET first_name=%s, last_name=%s, class_id=%s, profile_image_url=%s
+                    SET first_name=%s,
+                        last_name=%s,
+                        class_id=%s,
+                        profile_image_url=%s
                     WHERE id=%s
                     """,
                     (first_name, last_name, class_id, image_url, student_id)
                 )
 
-                cur.execute("DELETE FROM faces WHERE student_id=%s", (student_id,))
             else:
+                # insérer nouvel étudiant
                 cur.execute(
                     """
-                    INSERT INTO students (matricule, first_name, last_name, class_id, profile_image_url)
+                    INSERT INTO students
+                    (matricule, first_name, last_name, class_id, profile_image_url)
                     VALUES (%s,%s,%s,%s,%s)
                     """,
                     (matricule, first_name, last_name, class_id, image_url)
                 )
                 student_id = cur.lastrowid
 
+            # 5.b) Ajouter un nouvel embedding sans supprimer les anciens
             cur.execute(
                 """
                 INSERT INTO faces (student_id, encoding_format, face_encoding)
                 VALUES (%s,%s,%s)
                 """,
-                (student_id, "facenet512_l2", emb.astype(np.float32).tobytes())
+                (
+                    student_id,
+                    "facenet512_l2",
+                    emb.astype(np.float32).tobytes()
+                )
             )
 
         return func.HttpResponse(

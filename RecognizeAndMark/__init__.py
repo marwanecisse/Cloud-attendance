@@ -1,3 +1,4 @@
+# RecognizeAndMark/__init__.py
 import azure.functions as func
 import json
 import numpy as np
@@ -13,7 +14,10 @@ from shared import (
 )
 
 EMBED_DIM = 512
-MARGIN = 0.05
+
+# Valeur réaliste pour photo de groupe
+DEFAULT_THRESHOLD = 0.55
+
 
 def main(req: func.HttpRequest) -> func.HttpResponse:
     try:
@@ -21,7 +25,7 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
 
         image_url = body.get("image_url")
         class_id = body.get("class_id")
-        threshold = float(body.get("threshold", 0.35))
+        threshold = float(body.get("threshold", DEFAULT_THRESHOLD))
         request_id = body.get("request_id")
 
         if not image_url or not class_id:
@@ -33,19 +37,29 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
 
         class_id = int(class_id)
 
+        # --------------------------------------------------
         # 1) Télécharger image
+        # --------------------------------------------------
         img_bytes = download_url_bytes(image_url)
         bgr = bytes_to_bgr_image(img_bytes)
 
         conn = mysql_conn()
 
-        # 2) Total étudiants
+        # --------------------------------------------------
+        # 2) Nombre total d'étudiants
+        # --------------------------------------------------
         with conn.cursor() as cur:
-            cur.execute("SELECT COUNT(*) AS total FROM students WHERE class_id=%s", (class_id,))
+            cur.execute(
+                "SELECT COUNT(*) AS total FROM students WHERE class_id=%s",
+                (class_id,)
+            )
             total_students = int(cur.fetchone()["total"])
 
+        # --------------------------------------------------
         # 3) Détection visages
+        # --------------------------------------------------
         faces = face_detect_azure(img_bytes)
+
         if not faces:
             return func.HttpResponse(
                 json.dumps({
@@ -63,12 +77,21 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
                 mimetype="application/json"
             )
 
-        # 4) Charger embeddings DB
+        # --------------------------------------------------
+        # 4) Charger embeddings DB groupés par étudiant
+        # --------------------------------------------------
+        embeddings_by_student = {}
+        meta_by_student = {}
+
         with conn.cursor() as cur:
             cur.execute(
                 """
-                SELECT f.student_id, f.face_encoding,
-                       s.matricule, s.first_name, s.last_name
+                SELECT
+                    f.student_id,
+                    f.face_encoding,
+                    s.matricule,
+                    s.first_name,
+                    s.last_name
                 FROM faces f
                 JOIN students s ON s.id = f.student_id
                 WHERE s.class_id = %s
@@ -77,40 +100,40 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
             )
             rows = cur.fetchall()
 
-        valid_known = []
-        valid_meta = []
-
         for r in rows:
             e = np.frombuffer(r["face_encoding"], dtype=np.float32)
 
-            if e.shape != (EMBED_DIM,):
-                continue
-            if not np.isfinite(e).all():
+            if e.shape != (EMBED_DIM,) or not np.isfinite(e).all():
                 continue
 
             n = float(np.linalg.norm(e))
             if n < 0.1 or n > 100:
                 continue
 
-            valid_known.append(e / n)
-            valid_meta.append({
-                "student_id": r["student_id"],
-                "matricule": r["matricule"],
-                "first_name": r["first_name"],
-                "last_name": r["last_name"]
-            })
+            e = e / n
+            sid = r["student_id"]
 
-        if not valid_known:
-            raise ValueError("Aucun embedding valide en base")
+            if sid not in embeddings_by_student:
+                embeddings_by_student[sid] = []
+                meta_by_student[sid] = {
+                    "student_id": sid,
+                    "matricule": r["matricule"],
+                    "first_name": r["first_name"],
+                    "last_name": r["last_name"]
+                }
 
-        known = np.vstack(valid_known)
-        meta = valid_meta
+            embeddings_by_student[sid].append(e)
 
+        if not embeddings_by_student:
+            raise ValueError("Aucun embedding valide en base pour cette classe")
+
+        # --------------------------------------------------
+        # 5) Matching visage par visage (PAR ÉTUDIANT)
+        # --------------------------------------------------
         results = []
         present_ids = set()
         att_date, att_time = now_date_time()
 
-        # 5) Matching visage par visage
         for f in faces:
             crop = crop_face(bgr, f["faceRectangle"])
             emb = embed_face(crop)
@@ -126,42 +149,54 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
 
             emb = emb / n
 
-            sim = known @ emb
-            dist = 1.0 - sim
+            best_sid = None
+            best_dist = 1.0
 
-            order = np.argsort(dist)
-            best_i = int(order[0])
-            best_d = float(dist[best_i])
-            second_d = float(dist[order[1]]) if len(dist) > 1 else 1.0
+            # 🔑 distance minimale PAR ÉTUDIANT
+            for sid, emb_list in embeddings_by_student.items():
+                d = min(
+                    1.0 - float(np.dot(known_emb, emb))
+                    for known_emb in emb_list
+                )
 
-            if best_d <= threshold and (second_d - best_d) >= MARGIN:
-                m = meta[best_i]
-                present_ids.add(m["student_id"])
+                if d < best_dist:
+                    best_dist = d
+                    best_sid = sid
+
+            if best_sid is not None and best_dist <= threshold:
+                present_ids.add(best_sid)
                 results.append({
                     "match": True,
-                    "distance": round(best_d, 4),
-                    "student": m
+                    "distance": round(best_dist, 4),
+                    "student": meta_by_student[best_sid]
                 })
             else:
                 results.append({
                     "match": False,
-                    "distance": round(best_d, 4)
+                    "distance": round(best_dist, 4)
                 })
 
+        # --------------------------------------------------
+        # 6) Stats présence
+        # --------------------------------------------------
         present_count = len(present_ids)
         attendance_percentage = (
             round((present_count / total_students) * 100, 2)
             if total_students > 0 else 0.0
         )
 
-        # 6) DB insert + logs
+        # --------------------------------------------------
+        # 7) Insert attendance + logs
+        # --------------------------------------------------
         inserted = []
+
         with conn.cursor() as cur:
             for sid in present_ids:
                 try:
                     cur.execute(
                         """
-                        INSERT INTO attendance (student_id, attendance_date, attendance_time, source)
+                        INSERT INTO attendance
+                        (student_id, attendance_date, attendance_time, source)
                         VALUES (%s,%s,%s,'FACE')
                         """,
                         (sid, att_date, att_time)
@@ -182,6 +217,7 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
                     len(inserted),
                     json.dumps({
                         "class_id": class_id,
+                        "threshold": threshold,
                         "total_students": total_students,
                         "present_count": present_count,
                         "attendance_percentage": attendance_percentage
@@ -189,7 +225,10 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
                 )
             )
 
-        print(f"[RECO] class={class_id} faces={len(faces)} matched={present_count}")
+        print(
+            f"[RECO] class={class_id} faces={len(faces)} "
+            f"matched={present_count} threshold={threshold}"
+        )
 
         return func.HttpResponse(
             json.dumps({

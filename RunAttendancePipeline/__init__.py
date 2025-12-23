@@ -1,3 +1,4 @@
+# RunAttendancePipeline/__init__.py
 import azure.functions as func
 import json
 import os

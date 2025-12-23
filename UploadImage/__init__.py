@@ -1,3 +1,4 @@
+# UploadImage/__init__.py
 import azure.functions as func
 import json
 from shared import upload_bytes_to_blob
